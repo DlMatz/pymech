@@ -3,9 +3,9 @@
 #                                                                             #
 # A python module for reading and writing nek5000 files                       #
 #                                                                             #
-# Authors: Jacopo Canton, Nicolo' Fabbiane, Guillaume Chauvat                 #
+# Authors: Jacopo Canton, Nicolo' Fabbiane, Guillaume Chauvat, Daniel Matz    #
 # Contacts: jacopo.canton(at)gmail.com                                        #
-# Last edit: 2020-02-21                                                       #
+# Last edit: 2020-04-08                                                       #
 #=============================================================================#
 import struct
 import numpy as np
@@ -56,11 +56,11 @@ def readnek(fname):
 	# get number of pysical dimensions
 	ndim = 2 + (lr1[2]>1)
 	#
-	# get number of elements
-	nel = int(header[5])
-	#
 	# get number of elements in the file
-	nelf = int(header[6])
+	nelf = int(header[5])
+	#
+	# get number of elements
+	nel = int(header[6])
 	#
 	# get current time
 	time = float(header[7])
@@ -106,9 +106,8 @@ def readnek(fname):
 		print('ERROR: could not interpret endianness')
 		return -3
 	#
-	# read element map for the file
-	elmap = infile.read(4*nelf)
-	elmap = list(struct.unpack(emode+nelf*'i', elmap))
+	# close file
+	infile.close()
 	#
 	#---------------------------------------------------------------------------
 	# READ DATA
@@ -124,84 +123,129 @@ def readnek(fname):
 	elif (emode == '>'):
 		data.endian = 'big'
 	#
-	# read geometry
+	# initialize lims
 	data.lims.pos[:,0] =  float('inf')
 	data.lims.pos[:,1] = -float('inf')
-	for iel in elmap:
-		for idim in range(var[0]): # if var[0] == 0, geometry is not read
-			fi = infile.read(npel*wdsz)
-			fi = list(struct.unpack(emode+npel*realtype, fi))
-			ip = 0
-			for iz in range(lr1[2]):
-				for iy in range(lr1[1]):
-					data.elem[iel-1].pos[idim,iz,iy,:] = fi[ip:ip+lr1[0]]
-					ip += lr1[0]
-			data.lims.pos[idim,0] = min([data.lims.pos[idim,0]]+fi)
-			data.lims.pos[idim,1] = max([data.lims.pos[idim,1]]+fi)
-	#
-	# read velocity
 	data.lims.vel[:,0] =  float('inf')
 	data.lims.vel[:,1] = -float('inf')
-	for iel in elmap:
-		for idim in range(var[1]): # if var[1] == 0, velocity is not read
-			fi = infile.read(npel*wdsz)
-			fi = list(struct.unpack(emode+npel*realtype, fi))
-			ip = 0
-			for iz in range(lr1[2]):
-				for iy in range(lr1[1]):
-					data.elem[iel-1].vel[idim,iz,iy,:] = fi[ip:ip+lr1[0]]
-					ip += lr1[0]
-			data.lims.vel[idim,0] = min([data.lims.vel[idim,0]]+fi)
-			data.lims.vel[idim,1] = max([data.lims.vel[idim,1]]+fi)
-	#
-	# read pressure 
 	data.lims.pres[:,0] =  float('inf')
 	data.lims.pres[:,1] = -float('inf')
-	for iel in elmap:
-		for ivar in range(var[2]): # if var[2] == 0, pressure is not read
-			fi = infile.read(npel*wdsz)
-			fi = list(struct.unpack(emode+npel*realtype, fi))
-			ip = 0
-			for iz in range(lr1[2]):
-				for iy in range(lr1[1]):
-					data.elem[iel-1].pres[ivar,iz,iy,:] = fi[ip:ip+lr1[0]]
-					ip += lr1[0]
-			data.lims.pres[ivar,0] = min([data.lims.pres[ivar,0]]+fi)
-			data.lims.pres[ivar,1] = max([data.lims.pres[ivar,1]]+fi)
-	#
-	# read temperature
 	data.lims.temp[:,0] =  float('inf')
 	data.lims.temp[:,1] = -float('inf')
-	for iel in elmap:
-		for ivar in range(var[3]): # if var[3] == 0, temperature is not read
-			fi = infile.read(npel*wdsz)
-			fi = list(struct.unpack(emode+npel*realtype, fi))
-			ip = 0
-			for iz in range(lr1[2]):
-				for iy in range(lr1[1]):
-					data.elem[iel-1].temp[ivar,iz,iy,:] = fi[ip:ip+lr1[0]]
-					ip += lr1[0]
-			data.lims.temp[ivar,0] = min([data.lims.temp[ivar,0]]+fi)
-			data.lims.temp[ivar,1] = max([data.lims.temp[ivar,1]]+fi)
-	#
-	# read scalar fields
 	data.lims.scal[:,0] =  float('inf')
 	data.lims.scal[:,1] = -float('inf')
-	for iel in elmap:
-		for ivar in range(var[4]): # if var[4] == 0, scalars are not read
-			fi = infile.read(npel*wdsz)
-			fi = list(struct.unpack(emode+npel*realtype, fi))
-			ip = 0
-			for iz in range(lr1[2]):
-				for iy in range(lr1[1]):
-					data.elem[iel-1].scal[ivar,iz,iy,:] = fi[ip:ip+lr1[0]]
-					ip += lr1[0]
-			data.lims.scal[ivar,0] = min([data.lims.scal[ivar,0]]+fi)
-			data.lims.scal[ivar,1] = max([data.lims.scal[ivar,1]]+fi)
 	#
+	# Multiple files per time-step
+	# number of digits in nf
+	nf_digits = len(str(nf))
 	#
-	# close file
-	infile.close()
+	# generate filenames for multiple files
+	fname_split = fname.split('.')
+	gen_fname = []
+	for i in range(nf):
+		inum = '{0}'.format(str(i).zfill(nf_digits))
+		gen_fname.append(fname_split[0][:-nf_digits] + inum  + '.' + fname_split[1])
+	#
+	# loop over filenames
+	for files in gen_fname:
+		try:
+			infile = open(files, 'rb')
+		except IOError as e:
+			print('I/O error ({0}): {1}'.format(e.errno, e.strerror))
+			return -1
+		#		
+		# read header
+		header = infile.read(132).split()
+		#
+		# get number of elements in the file
+		nelf = int(header[5])
+		#
+		# identify endian encoding
+		etagb = infile.read(4)
+		etagL = struct.unpack('<f', etagb)[0]; etagL = int(etagL*1e5)/1e5
+		etagB = struct.unpack('>f', etagb)[0]; etagB = int(etagB*1e5)/1e5
+		if (etagL == 6.54321):
+			# print('Reading little-endian file\n')
+			emode = '<'
+		elif (etagB == 6.54321):
+			# print('Reading big-endian file\n')
+			emode = '>'
+		else:
+			print('ERROR: could not interpret endianness')
+			return -3
+		#
+		# read element map for the file
+		elmap = infile.read(4*nelf)
+		elmap = list(struct.unpack(emode+nelf*'i', elmap))
+		#
+		# read geometry
+		for iel in elmap:
+			for idim in range(var[0]): # if var[0] == 0, geometry is not read
+				fi = infile.read(npel*wdsz)
+				fi = list(struct.unpack(emode+npel*realtype, fi))
+				ip = 0
+				for iz in range(lr1[2]):
+					for iy in range(lr1[1]):
+						data.elem[iel-1].pos[idim,iz,iy,:] = fi[ip:ip+lr1[0]]
+						ip += lr1[0]
+				data.lims.pos[idim,0] = min([data.lims.pos[idim,0]]+fi)
+				data.lims.pos[idim,1] = max([data.lims.pos[idim,1]]+fi)
+		#
+		# read velocity
+		for iel in elmap:
+			for idim in range(var[1]): # if var[1] == 0, velocity is not read
+				fi = infile.read(npel*wdsz)
+				fi = list(struct.unpack(emode+npel*realtype, fi))
+				ip = 0
+				for iz in range(lr1[2]):
+					for iy in range(lr1[1]):
+						data.elem[iel-1].vel[idim,iz,iy,:] = fi[ip:ip+lr1[0]]
+						ip += lr1[0]
+				data.lims.vel[idim,0] = min([data.lims.vel[idim,0]]+fi)
+				data.lims.vel[idim,1] = max([data.lims.vel[idim,1]]+fi)
+		#
+		# read pressure 
+		for iel in elmap:
+			for ivar in range(var[2]): # if var[2] == 0, pressure is not read
+				fi = infile.read(npel*wdsz)
+				fi = list(struct.unpack(emode+npel*realtype, fi))
+				ip = 0
+				for iz in range(lr1[2]):
+					for iy in range(lr1[1]):
+						data.elem[iel-1].pres[ivar,iz,iy,:] = fi[ip:ip+lr1[0]]
+						ip += lr1[0]
+				data.lims.pres[ivar,0] = min([data.lims.pres[ivar,0]]+fi)
+				data.lims.pres[ivar,1] = max([data.lims.pres[ivar,1]]+fi)
+		#
+		# read temperature
+		for iel in elmap:
+			for ivar in range(var[3]): # if var[3] == 0, temperature is not read
+				fi = infile.read(npel*wdsz)
+				fi = list(struct.unpack(emode+npel*realtype, fi))
+				ip = 0
+				for iz in range(lr1[2]):
+					for iy in range(lr1[1]):
+						data.elem[iel-1].temp[ivar,iz,iy,:] = fi[ip:ip+lr1[0]]
+						ip += lr1[0]
+				data.lims.temp[ivar,0] = min([data.lims.temp[ivar,0]]+fi)
+				data.lims.temp[ivar,1] = max([data.lims.temp[ivar,1]]+fi)
+		#
+		# read scalar fields
+		for iel in elmap:
+			for ivar in range(var[4]): # if var[4] == 0, scalars are not read
+				fi = infile.read(npel*wdsz)
+				fi = list(struct.unpack(emode+npel*realtype, fi))
+				ip = 0
+				for iz in range(lr1[2]):
+					for iy in range(lr1[1]):
+						data.elem[iel-1].scal[ivar,iz,iy,:] = fi[ip:ip+lr1[0]]
+						ip += lr1[0]
+				data.lims.scal[ivar,0] = min([data.lims.scal[ivar,0]]+fi)
+				data.lims.scal[ivar,1] = max([data.lims.scal[ivar,1]]+fi)
+		#
+		#
+		# close file
+		infile.close()
 	#
 	# output
 	return data
